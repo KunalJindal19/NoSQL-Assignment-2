@@ -1,0 +1,21 @@
+Instructions to compile and run Problem 1(a): Top 50 Most Frequently Occurring Words
+
+1. We have provided a comprehensive `Makefile` in the root directory to heavily automate compilation and execution!
+   Navigate to the root folder and compile the Java code via Maven using the Makefile:
+   make compile
+
+2. To automatically clear previous output directories and execute the Job 1(a) MapReduce chain natively:
+   make 1a
+
+   # BEHIND THE SCENES (Manual Hadoop Client Execution without Make):
+   # rm -rf output_job1 output_final
+   # hadoop jar MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar com.nosql.assignment2.Top50Words Wikipedia-50-ARTICLES output_job1 output_final stopwords.txt
+   #
+   # ARGUMENT BREAKDOWN:
+   # args[0]: Wikipedia-50-ARTICLES (Input dataset directory)
+   # args[1]: output_job1 (Temporary output path for the Word Count MapReduce output)
+   # args[2]: output_final (Final output path for the Top 50 MapReduce output)
+   # args[3]: stopwords.txt (Path to the stop-words file for Distributed Cache)
+
+3. View the final extracted Result:
+   cat output_final/part-r-00000

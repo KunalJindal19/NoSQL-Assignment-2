@@ -1,0 +1,540 @@
+\documentclass[12pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{float}
+
+% --- Code listing style ---
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red},
+  showstringspaces=false
+}
+
+% --- Title ---
+\title{
+  \vspace{-1cm}
+  \textbf{DAS 839 -- NOSQL SYSTEMS} \\[0.5em]
+  \Large Assignment -- II \\[0.3em]
+  \large MapReduce \& Apache Hadoop
+}
+\author{
+  Mayank Tanwar (IMT2023012) \\
+  Areen Patil (IMT2023013) \\
+  Kunal Jindal (IMT2023049) \\
+  Ansh Gupta (IMT2023540)
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ====================================================================
+% PROBLEM 1
+% ====================================================================
+\section{Problem 1: Co-Occurring Word Matrix Generation}
+
+\subsection{Problem 1(a): Top 50 Most Frequent Words (3 Marks)}
+
+\subsubsection{Program Logic}
+We implemented a \textbf{two-job MapReduce chain} in the class \texttt{Top50Words.java}.
+
+\textbf{Job 1 -- Word Frequency Count:}
+\begin{itemize}
+  \item The \texttt{TokenizerMapper} loads the \texttt{stopwords.txt} file via Hadoop's \textbf{Distributed Cache} mechanism during the \texttt{setup()} phase.
+  \item Each line of input text is tokenized by splitting on non-alphabetic characters (\texttt{[{\textasciicircum}a-z]+}).
+  \item Tokens matching any stop-word are filtered out. Valid tokens are emitted as \texttt{(word, 1)} pairs.
+  \item The \texttt{IntSumReducer} aggregates counts for each word.
+  \item A \texttt{Combiner} (same as reducer) is also attached at the map-class level for local optimization.
+\end{itemize}
+
+\textbf{Job 2 -- Top 50 Extraction:}
+\begin{itemize}
+  \item A Java \texttt{PriorityQueue} (min-heap of size 50) is maintained locally in each mapper's memory.
+  \item Each mapper emits its local top-50 candidates to a \textbf{single reducer} (\texttt{numReduceTasks = 1}).
+  \item The reducer applies the same min-heap logic globally to extract the final top 50 words.
+  \item Output is written in descending frequency order.
+\end{itemize}
+
+\subsubsection{Pseudocode}
+\begin{lstlisting}
+// Job 1: Mapper
+setup(): load stopwords from DistributedCache into HashSet
+map(key, line):
+    for each token in line.split("[^a-z]+"):
+        if token not in stopWords:
+            emit(token, 1)
+
+// Job 1: Reducer
+reduce(word, counts):
+    emit(word, sum(counts))
+
+// Job 2: Mapper
+setup(): minHeap = new PriorityQueue(size=50)
+map(word, count):
+    minHeap.add((word, count))
+    if minHeap.size > 50: minHeap.poll()
+cleanup():
+    for each (word, count) in minHeap: emit(NULL, "word\tcount")
+
+// Job 2: Reducer (single reducer)
+reduce(NULL, values):
+    globalHeap = new PriorityQueue(size=50)
+    for each value: globalHeap.add(parse(value))
+    output globalHeap in descending order
+\end{lstlisting}
+
+\subsubsection{Output}
+The top 50 most frequently occurring non-stop-words are shown below (truncated):
+
+\begin{lstlisting}
+quot    1537        nintendo  338
+apos     954        http      314
+s        880        this      255
+lt       503        category  240
+gt       495        www       221
+\end{lstlisting}
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1a_output_1.png}
+  \caption{Problem 1(a): Top 50 Words Output -- Top portion}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1a_output_2.png}
+  \caption{Problem 1(a): Top 50 Words Output -- Bottom portion}
+\end{figure}
+
+% ---------------------------------------------------------------
+\subsection{Problem 1(b): Co-Occurrence Matrix -- Pairs Approach (3 Marks)}
+
+\subsubsection{Program Logic}
+Implemented in \texttt{CoOccurrencePairs.java}.
+
+\begin{itemize}
+  \item The mapper loads the Top 50 word list via Distributed Cache into a \texttt{HashSet} during \texttt{setup()}.
+  \item For each token at position $i$ in the input line, we examine tokens at positions $i+1$ through $\min(i+d, n-1)$, where $d$ is the configurable distance parameter.
+  \item Only pairs where \emph{both} words belong to the Top 50 list are emitted.
+  \item Pairs are canonicalized by lexicographic ordering to avoid duplicates: if $u < v$, emit $(u,v)$; otherwise emit $(v,u)$.
+  \item The reducer sums all counts for each unique pair.
+\end{itemize}
+
+\subsubsection{Pseudocode}
+\begin{lstlisting}
+setup(): load top50 words into HashSet; d = config.distance
+map(key, line):
+    tokens = line.split("[^a-z]+")
+    for i = 0 to len(tokens):
+        u = tokens[i]
+        if u not in top50: continue
+        for j = i+1 to min(i+d, len-1):
+            v = tokens[j]
+            if v not in top50 or u == v: continue
+            pair = (min(u,v), max(u,v))
+            emit(pair, 1)
+
+reduce(pair, counts):
+    emit(pair, sum(counts))
+\end{lstlisting}
+
+\subsubsection{Runtime Analysis}
+\begin{table}[H]
+  \centering
+  \begin{tabular}{@{}lcccc@{}}
+    \toprule
+    \textbf{Approach} & $d=1$ & $d=2$ & $d=3$ & $d=4$ \\
+    \midrule
+    Pairs (baseline) & 1537 ms & 1546 ms & 1554 ms & 1544 ms \\ 
+    \bottomrule
+  \end{tabular}
+  \caption{Pairs approach runtime for varying word distance $d$}
+\end{table}
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1b_run_1.png}
+  \caption{Problem 1(b): Pairs approach -- MapReduce execution start}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1b_run_2.png}
+  \caption{Problem 1(b): Pairs approach -- Reduce phase and runtime report}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1b_output.png}
+  \caption{Problem 1(b): Pairs co-occurrence matrix output sample}
+\end{figure}
+
+% ---------------------------------------------------------------
+\subsection{Problem 1(c): Co-Occurrence Matrix -- Stripes Approach (3 Marks)}
+
+\subsubsection{Program Logic}
+Implemented in \texttt{CoOccurrenceStripes.java}.
+
+\begin{itemize}
+  \item Instead of emitting individual pairs, the mapper builds an \textbf{associative array} (\texttt{MapWritable}) for each word $u$.
+  \item The stripe contains all neighboring Top 50 words within distance $d$ (both directions: $i-d$ to $i+d$) as keys, with their co-occurrence counts as values.
+  \item This dramatically reduces the number of key-value pairs emitted compared to the Pairs approach.
+  \item The reducer merges all stripes for each word by element-wise addition of counts.
+\end{itemize}
+
+\subsubsection{Pseudocode}
+\begin{lstlisting}
+map(key, line):
+    tokens = line.split("[^a-z]+")
+    for i = 0 to len(tokens):
+        u = tokens[i]
+        if u not in top50: continue
+        stripe = {}
+        for j = max(0, i-d) to min(len-1, i+d):
+            if j == i: continue
+            v = tokens[j]
+            if v not in top50 or u == v: continue
+            stripe[v] += 1
+        if stripe not empty: emit(u, stripe)
+
+reduce(word, stripes):
+    merged = {}
+    for each stripe: merged += stripe  // element-wise add
+    emit(word, merged)
+\end{lstlisting}
+
+\subsubsection{Runtime Analysis}
+\begin{table}[H]
+  \centering
+  \begin{tabular}{@{}lcccc@{}}
+    \toprule
+    \textbf{Approach} & $d=1$ & $d=2$ & $d=3$ & $d=4$ \\
+    \midrule
+    Stripes (baseline) & 1531 ms & 1543 ms & 2606 ms & 1548 ms \\
+    \bottomrule
+  \end{tabular}
+  \caption{Stripes approach runtime for varying word distance $d$}
+\end{table}
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1c_run_1.png}
+  \caption{Problem 1(c): Stripes approach -- MapReduce execution start}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1c_run_2.png}
+  \caption{Problem 1(c): Stripes approach -- Reduce phase and runtime report}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1c_output.png}
+  \caption{Problem 1(c): Stripes co-occurrence matrix output sample}
+\end{figure}
+
+% ---------------------------------------------------------------
+\subsection{Problem 1(e): Local Aggregation Strategies (5 Marks)}
+
+\subsubsection{Program Logic}
+We implemented four specialized Java classes to test two distinct local aggregation strategies across both the Pairs and Stripes architectures.
+
+\textbf{Strategy 1 -- Map-Class Level (Combiner):}
+\begin{itemize}
+  \item Hadoop's built-in Combiner mechanism is used. The Combiner runs the same logic as the Reducer, but executes \emph{locally on the mapper node} before the shuffle phase.
+  \item For Pairs: \texttt{job.setCombinerClass(IntSumReducer.class)} -- trivially reuses the existing reducer.
+  \item For Stripes: A custom \texttt{StripesCombiner} class merges \texttt{MapWritable} objects by element-wise addition of counts.
+  \item Implementation: \texttt{CoOccurrencePairsCombiner.java}, \texttt{CoOccurrenceStripesCombiner.java}.
+\end{itemize}
+
+\textbf{Strategy 2 -- Map-Function Level (In-Mapper Combining):}
+\begin{itemize}
+  \item A Java \texttt{HashMap} (for Pairs) or \texttt{HashMap<String, MapWritable>} (for Stripes) is created as an instance variable in the Mapper class.
+  \item During \texttt{map()}, results are accumulated directly in memory with \textbf{no calls to \texttt{context.write()}}.
+  \item Only in the \texttt{cleanup()} method are the fully aggregated results emitted to Hadoop.
+  \item This bypasses Hadoop's internal sorting/spilling overhead entirely, making it theoretically the fastest approach.
+  \item Implementation: \texttt{CoOccurrencePairsInMapper.java}, \texttt{CoOccurrenceStripesInMapper.java}.
+\end{itemize}
+
+\subsubsection{Runtime Comparison}
+\begin{table}[H]
+  \centering
+  \begin{tabular}{@{}lcccc@{}}
+    \toprule
+    \textbf{Configuration} & $d=1$ & $d=2$ & $d=3$ & $d=4$ \\
+    \midrule
+    Pairs (no aggregation)          & 1537 ms & 1546 ms & 1554 ms & 1544 ms \\
+    Pairs + Combiner                & 1549 ms & 1542 ms & 1557 ms & 1557 ms \\
+    Pairs + In-Mapper               & 1535 ms & 1549 ms & 1580 ms & 1544 ms \\
+    \midrule
+    Stripes (no aggregation)        & 1531 ms & 1543 ms & 2606 ms & 1548 ms \\
+    Stripes + Combiner              & 1536 ms & 1547 ms & 1556 ms & 1549 ms \\
+    Stripes + In-Mapper             & 1538 ms & 1551 ms & 1557 ms & 1545 ms \\
+    \bottomrule
+  \end{tabular}
+  \caption{Complete runtime comparison across all local aggregation strategies}
+\end{table}
+
+\subsubsection{Analysis}
+In our local standalone Hadoop environment operating on the relatively small Wikipedia-50-ARTICLES dataset (50 files, $\sim$700 KB total), all configurations converge to approximately the same runtime ($\sim$1540 ms). This is expected because:
+\begin{enumerate}
+  \item \textbf{No network shuffle overhead}: In local mode, all map and reduce tasks run in the same JVM process. The primary bottleneck that Combiners and In-Mapper Combining address---network I/O during the shuffle phase---does not exist.
+  \item \textbf{Small data volume}: With only 50 input files and a filtered vocabulary of 50 words, the number of intermediate key-value pairs is small enough to fit entirely in memory regardless of the aggregation strategy.
+  \item \textbf{JVM warm-up dominance}: The $\sim$1.5-second runtime is dominated by Hadoop framework initialization (JVM startup, job setup, class loading) rather than actual data processing.
+\end{enumerate}
+
+In a distributed multi-node cluster with large datasets, In-Mapper Combining would be expected to outperform the Combiner, which in turn would outperform the baseline, due to the significant reduction in network transfer during the shuffle phase.
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1e_pc_run.png}
+  \caption{Problem 1(e): Pairs + Combiner -- Execution and runtime}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1e_pim_run.png}
+  \caption{Problem 1(e): Pairs + In-Mapper Combining -- Execution and runtime}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1e_sc_run.png}
+  \caption{Problem 1(e): Stripes + Combiner -- Execution and runtime}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/1e_sim_run.png}
+  \caption{Problem 1(e): Stripes + In-Mapper Combining -- Execution and runtime}
+\end{figure}
+
+% ====================================================================
+% PROBLEM 2
+% ====================================================================
+\newpage
+\section{Problem 2: Indexing Documents via Hadoop}
+
+\subsection{Problem 2(a): Document Frequency Calculation (6 Marks)}
+
+\subsubsection{Program Logic}
+Implemented in \texttt{DocumentFrequency.java} as a two-job MapReduce chain.
+
+\textbf{Job 1 -- Document Frequency (DF):}
+\begin{itemize}
+  \item The \texttt{DFMapper} loads stop-words via Distributed Cache and initializes the \textbf{OpenNLP PorterStemmer}.
+  \item For each input split (one per document), the mapper tokenizes the text and applies stemming via \texttt{stemmer.stem(token)}.
+  \item A \texttt{HashSet<String>} is used to track unique stemmed terms \emph{within each document}. This ensures each term is emitted \textbf{at most once per document}, correctly computing the document frequency.
+  \item The reducer sums the counts to get the total DF for each term.
+  \item A Combiner (same as reducer) provides local aggregation.
+\end{itemize}
+
+\textbf{Job 2 -- Top 100 Extraction:}
+\begin{itemize}
+  \item Identical \texttt{PriorityQueue} min-heap architecture as Problem 1(a), but with $K=100$.
+  \item Output is a TSV file with schema: \texttt{TERM<tab>DF}.
+\end{itemize}
+
+\subsubsection{Pseudocode}
+\begin{lstlisting}
+// Job 1: DFMapper
+setup(): load stopwords; stemmer = new PorterStemmer()
+map(key, line):
+    uniqueTerms = new HashSet()
+    for each token in line.split("[^a-z]+"):
+        if token not in stopWords:
+            stemmed = stemmer.stem(token)
+            uniqueTerms.add(stemmed)
+    for each term in uniqueTerms:
+        emit(term, 1)
+
+// Job 1: DFReducer
+reduce(term, counts): emit(term, sum(counts))
+
+// Job 2: Same Top-K logic as Problem 1(a) with K=100
+\end{lstlisting}
+
+\subsubsection{Output Sample}
+\begin{lstlisting}
+TERM            DF
+refer           50
+s               49
+categori        48
+apo             46
+quot            44
+us              43
+other           43
+includ          42
+two             41
+link            41
+\end{lstlisting}
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2a_run_1.png}
+  \caption{Problem 2(a): Document Frequency -- Job 1 (DF extraction) execution}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2a_run_2.png}
+  \caption{Problem 2(a): Document Frequency -- Job 2 (Top 100 filtering) and runtimes}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2a_output_1.png}
+  \caption{Problem 2(a): Top 100 DF output -- Top portion}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2a_output_2.png}
+  \caption{Problem 2(a): Top 100 DF output -- Bottom portion}
+\end{figure}
+
+% ---------------------------------------------------------------
+\subsection{Problem 2(b): TF-IDF Indexing via Stripes (6 Marks)}
+
+\subsubsection{Program Logic}
+Implemented in \texttt{TFIDFIndexing.java} using the Stripes algorithm.
+
+\textbf{Mapper (\texttt{TFMapper}):}
+\begin{itemize}
+  \item Loads the Top 100 DF TSV file via Distributed Cache (\texttt{Job.addCacheFile()}) into a \texttt{HashMap<String, Integer>} during \texttt{setup()}.
+  \item Initializes the PorterStemmer for consistent tokenization.
+  \item Extracts the document ID from the input split filename via \texttt{FileSplit.getPath().getName()}.
+  \item Builds a \texttt{MapWritable} stripe mapping each Top 100 term found in the document to its term frequency (TF).
+  \item Emits \texttt{(DocumentID, \{term $\rightarrow$ TF, ...\})} -- one stripe per split.
+\end{itemize}
+
+\textbf{Reducer (\texttt{TFIDFReducer}):}
+\begin{itemize}
+  \item Also loads the DF cache in \texttt{setup()}.
+  \item Merges all incoming stripes for each document by element-wise addition.
+  \item For each term present in the merged stripe, computes the TF-IDF score using the formula specified in the assignment:
+  \[
+    \text{SCORE} = \text{TF} \times \ln\!\left(\frac{10000}{\text{DF}} + 1\right)
+  \]
+  \item Emits the result in the required TSV schema: \texttt{ID<tab>TERM<tab>SCORE}.
+\end{itemize}
+
+\subsubsection{Pseudocode}
+\begin{lstlisting}
+// Mapper
+setup(): load Top100 DF into HashMap; stemmer = new PorterStemmer()
+map(key, line):
+    docId = inputSplit.filename
+    stripe = {}
+    for each token in line:
+        stemmed = stemmer.stem(token)
+        if stemmed in Top100:
+            stripe[stemmed] += 1
+    if stripe not empty: emit(docId, stripe)
+
+// Reducer
+setup(): load Top100 DF into HashMap
+reduce(docId, stripes):
+    merged = {}
+    for each stripe: merged += stripe
+    for each (term, tf) in merged:
+        df = dfMap[term]
+        score = tf * ln(10000/df + 1)
+        emit("docId\tterm", score)
+\end{lstlisting}
+
+\subsubsection{Output Sample}
+\begin{lstlisting}
+ID              TERM        SCORE
+107301.txt      state       52.015
+107301.txt      citi        78.451
+108594.txt      region      36.729
+108594.txt      citi       126.728
+113147.txt      p          241.387
+113147.txt      s          207.613
+113147.txt      quot      2905.339
+1338.txt        american   239.684
+1338.txt        state      196.501
+\end{lstlisting}
+
+\subsubsection{Screenshots}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2b_run_1.png}
+  \caption{Problem 2(b): TF-IDF Indexing -- Map phase execution}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2b_run_2.png}
+  \caption{Problem 2(b): TF-IDF Indexing -- Reduce phase and runtime}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2b_output_1.png}
+  \caption{Problem 2(b): TF-IDF output -- First document scores}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{screenshots/2b_output_2.png}
+  \caption{Problem 2(b): TF-IDF output -- Additional document scores}
+\end{figure}
+
+% ====================================================================
+% ENVIRONMENT
+% ====================================================================
+\newpage
+\section{Environment \& Build Configuration}
+\begin{table}[H]
+  \centering
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Component} & \textbf{Version} \\
+    \midrule
+    Operating System   & macOS (Apple Silicon) \\
+    Java (JDK)         & OpenJDK 17 \\
+    Apache Hadoop      & 3.3.6 (standalone local mode) \\
+    Apache Maven       & 3.9.x \\
+    OpenNLP Tools      & 1.9.3 \\
+    Dataset            & Wikipedia-50-ARTICLES ($\sim$717 KB) \\
+    \bottomrule
+  \end{tabular}
+  \caption{Development environment specifications}
+\end{table}
+
+A comprehensive \texttt{Makefile} was developed to automate compilation and execution of all problems. Example usage:
+\begin{lstlisting}[language=bash]
+make compile        # Build the JAR via Maven
+make 1a             # Run Problem 1(a)
+make 1b d=3         # Run Problem 1(b) with distance d=3
+make 1c d=4         # Run Problem 1(c) with distance d=4
+make 1d_pc d=2      # Run Pairs + Combiner with d=2
+make 1d_pim d=2     # Run Pairs + In-Mapper with d=2
+make 1d_sc d=2      # Run Stripes + Combiner with d=2
+make 1d_sim d=2     # Run Stripes + In-Mapper with d=2
+make 2a             # Run Document Frequency extraction
+make 2b             # Run TF-IDF Indexing
+make clean          # Remove all output directories
+\end{lstlisting}
+
+\end{document}

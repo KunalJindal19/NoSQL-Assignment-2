@@ -1,0 +1,17 @@
+Instructions to compile and run Problem 2(a): Document Frequency & Top 100 extraction
+
+1. Navigate to the root folder and ensure Maven is compiled:
+   make compile
+
+2. To generate the Top 100 Document Frequencies cleanly, simply utilize the built-in Makefile tag:
+   make 2a
+
+   # BEHIND THE SCENES:
+   # Requires opennlp-tools-1.9.3.jar inside HADOOP_CLASSPATH for NLP stemming.
+   # You can run manually natively via:
+   # export HADOOP_CLASSPATH=$(PWD)/opennlp-tools-1.9.3.jar
+   # rm -rf output_2a_all output_2a_top100
+   # hadoop jar MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar com.nosql.assignment2.DocumentFrequency Wikipedia-50-ARTICLES output_2a_all output_2a_top100 stopwords.txt
+
+3. View the final extracted Result (TERM \t DF):
+   cat output_2a_top100/part-r-00000

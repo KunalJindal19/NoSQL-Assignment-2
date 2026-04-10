@@ -1,0 +1,16 @@
+Instructions to compile and run Problem 2(b): TF-IDF Factorization & Indexing
+
+1. Complete Problem 2(a) beforehand to ensure that `output_2a_top100/part-r-00000` is fully extracted and available for the MapReduce DistributedCache.
+
+2. To rapidly spin up the Stripe architecture metrics, simply utilize the Makefile layout:
+   make 2b
+
+   # BEHIND THE SCENES:
+   # Requires opennlp-tools-1.9.3.jar inside HADOOP_CLASSPATH for NLP stemming.
+   # You can run manually natively via:
+   # export HADOOP_CLASSPATH=$(PWD)/opennlp-tools-1.9.3.jar
+   # rm -rf output_2b_tfidf
+   # hadoop jar MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar com.nosql.assignment2.TFIDFIndexing Wikipedia-50-ARTICLES output_2b_tfidf output_2a_top100/part-r-00000
+
+3. View the final scaled results (docID \t term \t SCORE):
+   cat output_2b_tfidf/part-r-00000

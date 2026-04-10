@@ -1,0 +1,27 @@
+Instructions to compile and run Problem 1(d) / 1(e): Local Aggregations
+
+1. Navigate to the root folder (where your `Makefile` is located) and execute the master compile process.
+   make compile
+
+2. Ensure your master Top 50 frequent-words list (`output_final/part-r-00000`) has been successfully generated via Problem 1(a).
+
+3. To run MapReduce and automatically wipe out former Hadoop conflicts, simply use the custom Make shortcuts for any required distance `d`:
+   
+   To benchmark the Pairs Algorithm with Map-Class Combiner:
+   make 1d_pc d=2
+
+   To benchmark the Pairs Algorithm with In-Mapper Combining (Map-function level):
+   make 1d_pim d=2
+
+   To benchmark the Stripes Algorithm with Map-Class Combiner:
+   make 1d_sc d=2
+
+   To benchmark the Stripes Algorithm with In-Mapper Combining (Map-function level):
+   make 1d_sim d=2
+
+   # BEHIND THE SCENES:
+   # You can run manually via the Hadoop Client jar instead of Make:
+   # hadoop jar MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar com.nosql.assignment2.CoOccurrencePairsCombiner Wikipedia-50-ARTICLES output_1d_pc output_final/part-r-00000 2
+
+4. View the final result inside your selected output directory (e.g. output_1d_pc):
+   cat output_1d_pc/part-r-00000

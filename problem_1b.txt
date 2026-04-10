@@ -1,0 +1,21 @@
+Instructions to compile and run Problem 1(b): Co-Occurrence Pairs matrix
+
+1. We have provided a comprehensive `Makefile` in the root directory to heavily automate compilation and execution!
+   Navigate to the root folder, and ensure Maven is compiled:
+   make compile
+
+2. To generate the matrix, simply utilize the built-in Makefile tag. You can specify the required distance parameter 'd'. For example, if you want a co-occurrence window size of 3:
+   make 1b d=3
+
+   # BEHIND THE SCENES (Manual Hadoop Client Execution without Make):
+   # rm -rf output_pairs
+   # hadoop jar MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar com.nosql.assignment2.CoOccurrencePairs Wikipedia-50-ARTICLES output_pairs output_final/part-r-00000 3
+   #
+   # ARGUMENT BREAKDOWN:
+   # args[0]: Wikipedia-50-ARTICLES (Dataset)
+   # args[1]: output_pairs (Output Path)
+   # args[2]: output_final/part-r-00000 (Top 50 words cache from 1a)
+   # args[3]: 3 (Distance constraint 'd')
+
+3. View the final Co-Occurrence Result Matrix (`(Word, Word) -> Count`):
+   cat output_pairs/part-r-00000
