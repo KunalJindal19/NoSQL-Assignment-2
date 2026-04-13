@@ -9,11 +9,7 @@ import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.DoubleWritable;
-import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.MapWritable;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -26,9 +22,25 @@ import opennlp.tools.stemmer.PorterStemmer;
 
 public class TFIDFIndexing {
 
-    public static class TFMapper extends Mapper<Object, Text, Text, MapWritable> {
+    // Separator used inside the stripe value to delimit term:count pairs.
+    // Pipe is safe because stemmed terms are purely alphabetic.
+    private static final String PAIR_SEP = "|";
+    private static final String KV_SEP   = ":";
+
+    // -------------------------------------------------------------------------
+    // Mapper — stripes algorithm with in-mapper combining
+    // Accumulates term counts per document across all map() calls,
+    // emits one stripe per document in cleanup() to minimize shuffle volume.
+    // -------------------------------------------------------------------------
+    public static class TFMapper extends Mapper<Object, Text, Text, Text> {
         private Map<String, Integer> dfMap = new HashMap<String, Integer>();
         private PorterStemmer stemmer;
+
+        // docId → { term → count } accumulated across all map() calls
+        private Map<String, Map<String, Integer>> docStripes = new HashMap<String, Map<String, Integer>>();
+
+        private final Text outKey   = new Text();
+        private final Text outValue = new Text();
 
         @Override
         public void setup(Context context) throws IOException, InterruptedException {
@@ -53,7 +65,9 @@ public class TFIDFIndexing {
                 while ((line = reader.readLine()) != null) {
                     String[] parts = line.split("\\s+");
                     if (parts.length >= 2) {
-                        dfMap.put(parts[0], Integer.parseInt(parts[1]));
+                        try {
+                            dfMap.put(parts[0].trim(), Integer.parseInt(parts[1].trim()));
+                        } catch (NumberFormatException ignored) { }
                     }
                 }
                 reader.close();
@@ -64,41 +78,55 @@ public class TFIDFIndexing {
 
         @Override
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            // Document ID = filename without extension
+            String filename = ((FileSplit) context.getInputSplit()).getPath().getName();
+            String docId = filename.replaceAll("\\.[^.]+$", "");
+
             String line = value.toString().toLowerCase();
             String[] tokens = line.split("[^a-z]+");
-            
-            // Extract the Document ID (the actual filename)
-            FileSplit fileSplit = (FileSplit) context.getInputSplit();
-            String docId = fileSplit.getPath().getName();
-            
-            MapWritable stripe = new MapWritable();
-            
-            for (String t : tokens) {
-                if (!t.isEmpty()) {
-                    String stemmedTerm = stemmer.stem(t).toString();
-                    
-                    // Filter: Only process if the term is part of our Top 100 universe!
-                    if (dfMap.containsKey(stemmedTerm)) {
-                        Text termText = new Text(stemmedTerm);
-                        if (stripe.containsKey(termText)) {
-                            IntWritable count = (IntWritable) stripe.get(termText);
-                            count.set(count.get() + 1);
-                        } else {
-                            stripe.put(termText, new IntWritable(1));
-                        }
-                    }
-                }
+
+            // Get or create the stripe for this document
+            Map<String, Integer> stripe = docStripes.get(docId);
+            if (stripe == null) {
+                stripe = new HashMap<String, Integer>();
+                docStripes.put(docId, stripe);
             }
             
-            // Emit <DocID, {Term -> TF}>
-            if (!stripe.isEmpty()) {
-                context.write(new Text(docId), stripe);
+            for (String t : tokens) {
+                if (t.length() < 2) continue;  // skip single chars / empty
+                String stemmedTerm = stemmer.stem(t).toString();
+                
+                // Filter: Only process if the term is part of our Top 100 universe!
+                if (dfMap.containsKey(stemmedTerm)) {
+                    Integer count = stripe.get(stemmedTerm);
+                    stripe.put(stemmedTerm, count == null ? 1 : count + 1);
+                }
+            }
+        }
+
+        @Override
+        public void cleanup(Context context) throws IOException, InterruptedException {
+            // Emit ONE stripe per document — true in-mapper combining
+            for (Map.Entry<String, Map<String, Integer>> docEntry : docStripes.entrySet()) {
+                outKey.set(docEntry.getKey());
+
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<String, Integer> termEntry : docEntry.getValue().entrySet()) {
+                    if (sb.length() > 0) sb.append(PAIR_SEP);
+                    sb.append(termEntry.getKey()).append(KV_SEP).append(termEntry.getValue());
+                }
+                outValue.set(sb.toString());
+                context.write(outKey, outValue);
             }
         }
     }
 
-    public static class TFIDFReducer extends Reducer<Text, MapWritable, Text, DoubleWritable> {
+    // -------------------------------------------------------------------------
+    // Reducer — merges stripes, computes TF-IDF, emits ID<tab>TERM<tab>SCORE
+    // -------------------------------------------------------------------------
+    public static class TFIDFReducer extends Reducer<Text, Text, Text, Text> {
         private Map<String, Integer> dfMap = new HashMap<String, Integer>();
+        private final Text outValue = new Text();
 
         @Override
         public void setup(Context context) throws IOException, InterruptedException {
@@ -123,7 +151,9 @@ public class TFIDFIndexing {
                 while ((line = reader.readLine()) != null) {
                     String[] parts = line.split("\\s+");
                     if (parts.length >= 2) {
-                        dfMap.put(parts[0], Integer.parseInt(parts[1]));
+                        try {
+                            dfMap.put(parts[0].trim(), Integer.parseInt(parts[1].trim()));
+                        } catch (NumberFormatException ignored) { }
                     }
                 }
                 reader.close();
@@ -133,39 +163,35 @@ public class TFIDFIndexing {
         }
 
         @Override
-        public void reduce(Text key, Iterable<MapWritable> values, Context context) throws IOException, InterruptedException {
-            MapWritable aggregatedDocStripe = new MapWritable();
-            
-            // Combine all MapWritables mapped to this document
-            for (MapWritable stripe : values) {
-                for (Map.Entry<Writable, Writable> entry : stripe.entrySet()) {
-                    Text term = (Text) entry.getKey();
-                    IntWritable count = (IntWritable) entry.getValue();
-                    
-                    if (aggregatedDocStripe.containsKey(term)) {
-                        IntWritable finalCount = (IntWritable) aggregatedDocStripe.get(term);
-                        finalCount.set(finalCount.get() + count.get());
-                    } else {
-                        aggregatedDocStripe.put(new Text(term), new IntWritable(count.get()));
-                    }
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            // Merge all partial stripes for this document
+            Map<String, Integer> termCounts = new HashMap<String, Integer>();
+            for (Text stripeText : values) {
+                String[] pairs = stripeText.toString().split("\\" + PAIR_SEP);
+                for (String pair : pairs) {
+                    int sep = pair.indexOf(KV_SEP);
+                    if (sep < 0) continue;
+                    String term = pair.substring(0, sep);
+                    try {
+                        int count = Integer.parseInt(pair.substring(sep + 1));
+                        Integer existing = termCounts.get(term);
+                        termCounts.put(term, existing == null ? count : existing + count);
+                    } catch (NumberFormatException ignored) { }
                 }
             }
             
-            // Complete mathematically scaled output
-            for (Map.Entry<Writable, Writable> entry : aggregatedDocStripe.entrySet()) {
-                String term = ((Text) entry.getKey()).toString();
-                int tf = ((IntWritable) entry.getValue()).get();
+            // Compute and emit TF-IDF score for each term
+            for (Map.Entry<String, Integer> entry : termCounts.entrySet()) {
+                String term = entry.getKey();
+                int tf = entry.getValue();
+                int df = dfMap.containsKey(term) ? dfMap.get(term) : 1;
                 
-                if (dfMap.containsKey(term)) {
-                    int df = dfMap.get(term);
-                    
-                    // Enforce the required log function strictly via Math.log() base e
-                    double score = tf * Math.log(10000.0 / df + 1.0);
-                    
-                    // Format Output strictly as "ID \t TERM" -> "SCORE"
-                    String formattedKey = key.toString() + "\t" + term;
-                    context.write(new Text(formattedKey), new DoubleWritable(score));
-                }
+                double score = tf * Math.log(10000.0 / df + 1.0);
+                
+                // key = docId, value = "term\tscore"
+                // TextOutputFormat writes: docId\tterm\tscore  →  ID<tab>TERM<tab>SCORE ✓
+                outValue.set(term + "\t" + String.format("%.6f", score));
+                context.write(key, outValue);
             }
         }
     }
@@ -183,10 +209,11 @@ public class TFIDFIndexing {
         job.setMapperClass(TFMapper.class);
         job.setReducerClass(TFIDFReducer.class);
         
+        // Both mapper and reducer now use Text for key and value
         job.setMapOutputKeyClass(Text.class);
-        job.setMapOutputValueClass(MapWritable.class);
+        job.setMapOutputValueClass(Text.class);
         job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(DoubleWritable.class);
+        job.setOutputValueClass(Text.class);
 
         // Cache the Top 100 DF file generated by subproblem 2(a)
         // Using makeQualified to ensure the path is absolute for LocalJobRunner

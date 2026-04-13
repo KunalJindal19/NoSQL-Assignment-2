@@ -35,8 +35,7 @@ public class CoOccurrenceStripesCombiner {
             URI[] cacheFiles = Job.getInstance(conf).getCacheFiles();
             if (cacheFiles != null && cacheFiles.length > 0) {
                 for (URI cacheURI : cacheFiles) {
-                    Path path = new Path(cacheURI.getPath());
-                    parseTop50File(path.getName());
+                    parseTop50File(cacheURI.getPath());
                 }
             }
         }

@@ -1,0 +1,6 @@
+partb/TFIDFScorer$TFIDFReducer.class
+partb/TFIDFScorer.class
+parta/DocumentFrequency.class
+partb/TFIDFScorer$StripeMapper.class
+parta/DocumentFrequency$DFMapper.class
+parta/DocumentFrequency$DFReducer.class

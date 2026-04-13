@@ -27,10 +27,12 @@ public class DocumentFrequency {
 
     // -------------------------------------------------------------
     // JOB 1: Document Frequency (DF) Calculation
+    // Mapper emits (stemmed_term, doc_id) so the reducer can count
+    // the number of DISTINCT documents each term appears in.
     // -------------------------------------------------------------
-    public static class DFMapper extends Mapper<Object, Text, Text, IntWritable> {
-        private final static IntWritable one = new IntWritable(1);
+    public static class DFMapper extends Mapper<Object, Text, Text, Text> {
         private Text word = new Text();
+        private Text docIdText = new Text();
         private Set<String> stopWords = new HashSet<String>();
         private PorterStemmer stemmer;
 
@@ -61,36 +63,43 @@ public class DocumentFrequency {
 
         @Override
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            // Extract the Document ID from the input filename
+            String filename = ((FileSplit) context.getInputSplit()).getPath().getName();
+            String docId = filename.replaceAll("\\.[^.]+$", "");
+            docIdText.set(docId);
+
             String line = value.toString().toLowerCase();
             String[] tokens = line.split("[^a-z]+");
             
-            // To compute DF, we only care if the term appears AT LEAST once in this document.
-            // Using a HashSet automatically removes duplicate terms in the same document!
-            Set<String> uniqueTermsInDoc = new HashSet<String>();
+            // Deduplicate within this line so each term emits at most once per line
+            Set<String> seenThisLine = new HashSet<String>();
             
             for (String t : tokens) {
-                if (!t.isEmpty() && !stopWords.contains(t)) {
-                    // Stem the valid token using OpenNLP
-                    uniqueTermsInDoc.add(stemmer.stem(t).toString());
+                if (t.length() < 2) continue;               // skip single chars / empty
+                if (stopWords.contains(t)) continue;         // skip raw stopword
+
+                String stemmed = stemmer.stem(t).toString();
+                if (stemmed.length() < 2) continue;          // skip degenerate stems
+                if (stopWords.contains(stemmed)) continue;   // skip stemmed stopword
+
+                if (seenThisLine.add(stemmed)) {
+                    word.set(stemmed);
+                    context.write(word, docIdText);           // emit (term, docId)
                 }
-            }
-            
-            // Emit each unique stemmed term exactly once for this document
-            for (String term : uniqueTermsInDoc) {
-                word.set(term);
-                context.write(word, one);
             }
         }
     }
 
-    public static class DFReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
+    // Reducer counts DISTINCT document IDs for each term → true DF
+    public static class DFReducer extends Reducer<Text, Text, Text, IntWritable> {
         private IntWritable result = new IntWritable();
-        public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-            int sum = 0;
-            for (IntWritable val : values) {
-                sum += val.get();
+
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            Set<String> distinctDocs = new HashSet<String>();
+            for (Text val : values) {
+                distinctDocs.add(val.toString());
             }
-            result.set(sum);
+            result.set(distinctDocs.size());
             context.write(key, result);
         }
     }
@@ -197,10 +206,17 @@ public class DocumentFrequency {
         Job job1 = Job.getInstance(conf, "Calculate Document Frequency");
         job1.setJarByClass(DocumentFrequency.class);
         job1.setMapperClass(DFMapper.class);
-        job1.setCombinerClass(DFReducer.class);
+        // NO combiner — we need all (term, docId) pairs to reach the reducer
+        // so it can count distinct documents accurately.
         job1.setReducerClass(DFReducer.class);
+
+        // Mapper output types: (Text, Text) = (term, docId)
+        job1.setMapOutputKeyClass(Text.class);
+        job1.setMapOutputValueClass(Text.class);
+        // Reducer output types: (Text, IntWritable) = (term, DF count)
         job1.setOutputKeyClass(Text.class);
         job1.setOutputValueClass(IntWritable.class);
+
         // Cache stopwords exactly as requested:
         job1.addCacheFile(new Path(args[3]).toUri());
         

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.nosql.assignment2</groupId>
+  <artifactId>problem2</artifactId>
+  <version>1.0</version>
+  <packaging>jar</packaging>
+  <name>Problem 2 - Document Indexing via Hadoop MapReduce</name>
+
+  <properties>
+    <!-- Target Java 11 bytecode — required by Hadoop's JVM -->
+    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.target>11</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <hadoop.version>3.3.6</hadoop.version>
+    <opennlp.version>1.9.3</opennlp.version>
+  </properties>
+
+  <dependencies>
+
+    <!-- Hadoop: present on the cluster at runtime, NOT bundled in the JAR -->
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-client</artifactId>
+      <version>${hadoop.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- OpenNLP Porter Stemmer: bundled into the fat JAR -->
+    <dependency>
+      <groupId>org.apache.opennlp</groupId>
+      <artifactId>opennlp-tools</artifactId>
+      <version>${opennlp.version}</version>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+        <configuration>
+          <source>11</source>
+          <target>11</target>
+        </configuration>
+      </plugin>
+
+      <!--
+        Shade plugin: produces a single fat JAR (problem2.jar) in the project
+        root that bundles OpenNLP but excludes all Hadoop classes (provided scope).
+
+        NO <mainClass> is set intentionally — the JAR contains TWO entry points:
+          parta.DocumentFrequency  (Problem 2a)
+          partb.TFIDFScorer        (Problem 2b)
+        Without a Main-Class manifest attribute, Hadoop's RunJar always consumes
+        the class name from the CLI, so args arrive correctly in run().
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <finalName>problem2</finalName>
+              <outputDirectory>${project.basedir}</outputDirectory>
+              <filters>
+                <!-- Strip signature files that cause SecurityException in fat JARs -->
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <transformers>
+                <!-- Merge service files needed by OpenNLP internals -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+    </plugins>
+  </build>
+
+</project>

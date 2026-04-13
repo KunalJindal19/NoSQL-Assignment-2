@@ -40,9 +40,7 @@ public class Top50Words {
                 URI[] patternsURIs = Job.getInstance(conf).getCacheFiles();
                 if (patternsURIs != null) {
                     for (URI patternsURI : patternsURIs) {
-                        Path patternsPath = new Path(patternsURI.getPath());
-                        String patternsFileName = patternsPath.getName().toString();
-                        parseSkipFile(patternsFileName);
+                        parseSkipFile(patternsURI.getPath());
                     }
                 }
             }

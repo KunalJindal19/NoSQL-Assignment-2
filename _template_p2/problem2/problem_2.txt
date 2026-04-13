@@ -1,0 +1,163 @@
+Problem 2 — Indexing Documents via Hadoop
+==========================================
+
+PROJECT STRUCTURE
+-----------------
+problem2/
+├── pom.xml                         Maven project (Hadoop=provided, OpenNLP=bundled)
+├── build.sh                        Compile both jobs → problem2.jar
+├── problem_2.txt                   This file
+├── problem2.jar                    Fat JAR with both entry points (built)
+├── src/main/java/
+│   ├── parta/DocumentFrequency.java    Problem 2a: Document Frequency
+│   └── partb/TFIDFScorer.java          Problem 2b: TF-IDF Scorer
+├── scripts/
+│   ├── run_2a.sh                   Run 2a + save output locally
+│   ├── extract_top100.sh           Extract top 100 terms for 2b
+│   └── run_2b.sh                   Run 2b + save output locally
+└── output/
+    ├── df_output.tsv               Full DF results  (TERM<tab>DF)
+    ├── df_top100.tsv               Top 100 terms    (TERM<tab>DF)
+    └── tfidf_output.tsv            TF-IDF scores    (ID<tab>TERM<tab>SCORE)
+
+DEPENDENCIES
+------------
+opennlp-tools 1.9.3   Porter Stemmer (bundled in fat JAR via Maven)
+Hadoop 3.3.6          MapReduce runtime (provided; not bundled)
+
+=======================================================================
+PROBLEM 2a — Document Frequency (DF)
+=======================================================================
+
+WHAT IT DOES
+------------
+For each distinct stemmed term across all Wikipedia articles, counts
+the number of distinct documents in which the term appears.
+Output schema: TERM<tab>DF
+
+PROGRAM LOGIC (parta/DocumentFrequency.java)
+--------------------------------------------
+Mapper (DFMapper):
+  setup():  Reads stopwords.txt from HDFS into a HashSet.
+  map():    Per input line —
+            1. Derives doc ID from filename (e.g. "107301.txt" → "107301").
+            2. Tokenises on non-letter chars, lowercases.
+            3. Stems each token with PorterStemmer.
+            4. Skips stopwords before and after stemming.
+            5. Emits (stemmed_term, doc_id) at most ONCE per line
+               (per-line HashSet dedup reduces shuffle data).
+
+Reducer (DFReducer):
+  reduce(): Collects all doc_id values for a term into a HashSet,
+            writes (term, HashSet.size()) = (term, DF).
+
+PSEUDOCODE
+----------
+map(line):
+  doc_id = filename_without_extension
+  seen = {}
+  for token in tokenize(line.lower()):
+    if len < 2 or is_stopword(token): skip
+    s = stem(token)
+    if len(s) < 2 or is_stopword(s): skip
+    if s not in seen: emit(s, doc_id); seen.add(s)
+
+reduce(term, [doc_ids]):
+  emit(term, count_distinct(doc_ids))
+
+HOW TO RUN
+----------
+Step 1 — Build:
+  cd problem2
+  chmod +x build.sh scripts/*.sh
+  ./build.sh
+
+Step 2 — Test on 50 articles:
+  ./scripts/run_2a.sh
+
+Step 3 — Full Wikipedia run:
+  ./scripts/run_2a.sh /user/$USER/input/wiki_full /user/$USER/output/df_full
+
+Step 4 — Extract top 100 terms:
+  ./scripts/extract_top100.sh
+
+
+=======================================================================
+PROBLEM 2b — TF-IDF Scoring
+=======================================================================
+
+WHAT IT DOES
+------------
+For each (document, term) pair where term is in the top-100 vocabulary,
+computes a relevance score:
+  SCORE = TF * log(10000 / DF + 1)
+where TF = occurrences of term in this document,
+      DF = number of documents containing this term (from Problem 2a).
+Output schema: ID<tab>TERM<tab>SCORE
+
+PROGRAM LOGIC (partb/TFIDFScorer.java)
+---------------------------------------
+Mapper (StripeMapper) — STRIPES algorithm with in-mapper combining:
+  setup():    Reads df_top100.tsv from HDFS → dfMap (term → DF).
+  map():      For each input line, stems tokens, counts occurrences of
+              top-100 terms, accumulates into an in-memory stripe
+              (HashMap<docId, HashMap<term, count>>).
+              Nothing is emitted during map() — all emits are deferred.
+  cleanup():  After all lines are processed, iterates over the accumulated
+              stripes and emits one (docId, stripe_string) per document.
+              Stripe format: "term1:count1|term2:count2|..."
+              The pipe separator is safe because stemmed terms are
+              purely alphabetic.
+
+Reducer (TFIDFReducer):
+  setup():    Reloads dfMap from HDFS (same file as mapper).
+  reduce():   1. Merges all partial stripes for the same docId (handles
+                 the case where a large article is split across mappers).
+              2. For each term, computes SCORE = TF * log(10000/DF + 1).
+              3. Emits (docId, "term\tscore").
+                 TextOutputFormat writes "docId\tterm\tscore"
+                 → matches required schema ID<tab>TERM<tab>SCORE.
+
+WHY STRIPES?
+------------
+Instead of emitting one (docId, term) pair per token (pairs approach),
+the mapper accumulates a complete term-count map (the "stripe") per
+document in memory, then emits one k-v pair per document per mapper task.
+This dramatically reduces the number of intermediate pairs sent to the
+shuffle/sort phase.
+
+PSEUDOCODE
+----------
+setup():
+  load df_top100.tsv → dfMap
+
+map(line):
+  doc_id = filename_without_extension
+  for token in tokenize(line.lower()):
+    s = stem(token)
+    if s in dfMap: stripe[doc_id][s] += 1
+
+cleanup():
+  for doc_id, counts in stripe.items():
+    emit(doc_id, serialize(counts))
+
+reduce(doc_id, [stripe1, stripe2, ...]):
+  merged = merge_all_stripes(stripes)
+  for term, tf in merged.items():
+    score = tf * log(10000 / dfMap[term] + 1)
+    emit(doc_id, term + "\t" + score)
+
+HOW TO RUN
+----------
+Step 1 — Run 2a and extract top 100 first (if not already done):
+  ./scripts/run_2a.sh
+  ./scripts/extract_top100.sh
+
+Step 2 — Test on 50 articles:
+  ./scripts/run_2b.sh
+
+Step 3 — Full Wikipedia run:
+  ./scripts/run_2b.sh \
+    /user/$USER/input/wiki_full \
+    /user/$USER/output/tfidf_full \
+    /user/$USER/df_top100.tsv

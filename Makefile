@@ -111,13 +111,17 @@ clean:
 # ---------------------------------------------------------
 2a:
 	rm -rf output_2a_all output_2a_top100
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.DocumentFrequency $(INPUT) output_2a_all output_2a_top100 stopwords.txt
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.DocumentFrequency $(INPUT) output_2a_all output_2a_top100 stopwords.txt 2>&1 | tee output_2a.log
+	@grep "Execution Time" output_2a.log > output_2a_top100/runtime.txt
 	@echo "\n=> Check result: cat output_2a_top100/part-r-00000"
+	@echo "=> Runtime saved in output_2a_top100/runtime.txt"
 
 # ---------------------------------------------------------
 # Problem 2b - TF-IDF Indexing (Stripes)
 # ---------------------------------------------------------
 2b:
 	rm -rf output_2b_tfidf
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.TFIDFIndexing $(INPUT) output_2b_tfidf output_2a_top100/part-r-00000
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.TFIDFIndexing $(INPUT) output_2b_tfidf output_2a_top100/part-r-00000 2>&1 | tee output_2b.log
+	@grep "Execution Time" output_2b.log > output_2b_tfidf/runtime.txt
 	@echo "\n=> Check result: cat output_2b_tfidf/part-r-00000"
+	@echo "=> Runtime saved in output_2b_tfidf/runtime.txt"
