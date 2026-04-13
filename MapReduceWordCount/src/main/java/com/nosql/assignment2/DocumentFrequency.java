@@ -37,11 +37,11 @@ public class DocumentFrequency {
         @Override
         public void setup(Context context) throws IOException, InterruptedException {
             stemmer = new PorterStemmer();
-            URI[] cacheFiles = Job.getInstance(context.getConfiguration()).getCacheFiles();
+            URI[] cacheFiles = context.getCacheFiles();
             if (cacheFiles != null && cacheFiles.length > 0) {
                 for (URI cacheURI : cacheFiles) {
-                    Path path = new Path(cacheURI.getPath());
-                    parseStopWordsFile(path.getName());
+                    // Use getPath() to get the actual local filesystem path
+                    parseStopWordsFile(cacheURI.getPath());
                 }
             }
         }
@@ -191,6 +191,7 @@ public class DocumentFrequency {
         }
 
         Configuration conf = new Configuration();
+        long totalStartTime = System.currentTimeMillis();
         
         // --- JOB 1 Configurations ---
         Job job1 = Job.getInstance(conf, "Calculate Document Frequency");
@@ -232,6 +233,7 @@ public class DocumentFrequency {
         long startJob2 = System.currentTimeMillis();
         boolean success2 = job2.waitForCompletion(true);
         System.out.println("Job 2 (Top 100 Filtering) Execution Time: " + (System.currentTimeMillis() - startJob2) + " ms");
+        System.out.println(">>> Total Task 2a Execution Time: " + (System.currentTimeMillis() - totalStartTime) + " ms <<<");
 
         System.exit(success2 ? 0 : 1);
     }

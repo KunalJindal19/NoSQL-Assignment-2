@@ -1,8 +1,11 @@
 HADOOP_BIN = /opt/homebrew/bin/hadoop
 MVN_BIN = /opt/homebrew/bin/mvn
 JAR_FILE = MapReduceWordCount/target/MapReduceWordCount-1.0-SNAPSHOT.jar
-INPUT = Wikipedia-50-ARTICLES
+INPUT = Wikipedia-EN-20120601_ARTICLES
 TOP_50_CACHE = output_final/part-r-00000
+
+# Optimization for Local Mode
+export HADOOP_HEAPSIZE_MAX=4096
 
 # Export local jar to Hadoop's execution classpath
 export HADOOP_CLASSPATH=$(PWD)/opennlp-tools-1.9.3.jar
@@ -10,7 +13,7 @@ export HADOOP_CLASSPATH=$(PWD)/opennlp-tools-1.9.3.jar
 # Default distance if none provided (e.g. `make 1b` runs with d=1, `make 1b d=3` runs with d=3)
 d ?= 1
 
-.PHONY: compile 1a 1b 1c 1d_pc 1d_pim 1d_sc 1d_sim clean run_benchmarks
+.PHONY: compile 1a 1b 1c 1d_pc 1d_pim 1d_sc 1d_sim 1d_pairs 1d_stripes clean run_benchmarks
 
 # ---------------------------------------------------------
 # Compilation
@@ -31,18 +34,22 @@ compile:
 # Usage: make 1b d=3
 # ---------------------------------------------------------
 1b:
-	rm -rf output_pairs
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairs $(INPUT) output_pairs $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_pairs/part-r-00000"
+	rm -rf output_pairs_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairs $(INPUT) output_pairs_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_pairs_$(d).log
+	@grep "Execution Time" output_pairs_$(d).log > output_pairs_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_pairs_$(d)/part-r-00000"
+	@echo "=> Runtime saved in output_pairs_$(d)/runtime.txt"
 
 # ---------------------------------------------------------
 # Problem 1c - Co-Occurrence Matrix (Stripes)
 # Usage: make 1c d=4
 # ---------------------------------------------------------
 1c:
-	rm -rf output_stripes
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripes $(INPUT) output_stripes $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_stripes/part-r-00000"
+	rm -rf output_stripes_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripes $(INPUT) output_stripes_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_stripes_$(d).log
+	@grep "Execution Time" output_stripes_$(d).log > output_stripes_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_stripes_$(d)/part-r-00000"
+	@echo "=> Runtime saved in output_stripes_$(d)/runtime.txt"
 
 # ---------------------------------------------------------
 # Problem 1d - Local Aggregations (4 variations)
@@ -53,24 +60,44 @@ compile:
 # ---------------------------------------------------------
 
 1d_pc:
-	rm -rf output_1d_pc
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairsCombiner $(INPUT) output_1d_pc $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_1d_pc/part-r-00000"
+	rm -rf output_1d_pc_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairsCombiner $(INPUT) output_1d_pc_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_pc_$(d).log
+	@grep "Execution Time" output_1d_pc_$(d).log > output_1d_pc_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_pc_$(d)/part-r-00000"
 
 1d_pim:
-	rm -rf output_1d_pim
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairsInMapper $(INPUT) output_1d_pim $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_1d_pim/part-r-00000"
+	rm -rf output_1d_pim_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairsInMapper $(INPUT) output_1d_pim_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_pim_$(d).log
+	@grep "Execution Time" output_1d_pim_$(d).log > output_1d_pim_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_pim_$(d)/part-r-00000"
 
 1d_sc:
-	rm -rf output_1d_sc
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripesCombiner $(INPUT) output_1d_sc $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_1d_sc/part-r-00000"
+	rm -rf output_1d_sc_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripesCombiner $(INPUT) output_1d_sc_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_sc_$(d).log
+	@grep "Execution Time" output_1d_sc_$(d).log > output_1d_sc_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_sc_$(d)/part-r-00000"
 
 1d_sim:
-	rm -rf output_1d_sim
-	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripesInMapper $(INPUT) output_1d_sim $(TOP_50_CACHE) $(d)
-	@echo "\n=> Check result: cat output_1d_sim/part-r-00000"
+	rm -rf output_1d_sim_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripesInMapper $(INPUT) output_1d_sim_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_sim_$(d).log
+	@grep "Execution Time" output_1d_sim_$(d).log > output_1d_sim_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_sim_$(d)/part-r-00000"
+
+# ---------------------------------------------------------
+# Problem 1d - Local Aggregations (Optimized)
+# ---------------------------------------------------------
+
+1d_pairs:
+	rm -rf output_1d_pairs_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrencePairsInMapper $(INPUT) output_1d_pairs_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_pairs_$(d).log
+	@grep "Execution Time" output_1d_pairs_$(d).log > output_1d_pairs_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_pairs_$(d)/part-r-00000"
+
+1d_stripes:
+	rm -rf output_1d_stripes_$(d)
+	$(HADOOP_BIN) jar $(JAR_FILE) com.nosql.assignment2.CoOccurrenceStripesInMapper $(INPUT) output_1d_stripes_$(d) $(TOP_50_CACHE) $(d) 2>&1 | tee output_1d_stripes_$(d).log
+	@grep "Execution Time" output_1d_stripes_$(d).log > output_1d_stripes_$(d)/runtime.txt
+	@echo "\n=> Result saved in output_1d_stripes_$(d)/part-r-00000"
 
 # ---------------------------------------------------------
 # Utilities
